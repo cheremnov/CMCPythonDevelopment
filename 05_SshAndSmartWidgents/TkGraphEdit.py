@@ -47,11 +47,24 @@ def text_from_figure(figure: FigureInfo) -> str:
            f"{figure.border_color} {figure.fill_color}"
 
 
+def is_point_in_rectangle(point_x: float, point_y: float,
+                          coords: t.List[float]) -> bool:
+    # Get the top left and bottom right rectangle corners
+    if coords[0] > coords[2]:
+        coords[0], coords[2] = coords[2], coords[0]
+    if coords[1] > coords[3]:
+        coords[1], coords[3] = coords[3], coords[1]
+    return (point_x >= coords[0] and point_x <= coords[2]
+            and point_y >= coords[1] and point_y <= coords[3])
+
+
 class GraphEditorFrame(tk.Frame):
 
     def __init__(self, master=None):
         super().__init__(master)
         self.new_coord = []
+        self.figures_lst = []
+        self.is_dragged_figure = False
         self.grid(sticky=tk.N+tk.S+tk.E+tk.W)
         self.create_widgets()
 
@@ -102,12 +115,14 @@ class GraphEditorFrame(tk.Frame):
         self.mousepos_label.grid(row=0, column=TEXTEDITOR_COLUMNSPAN + 4,
                                  rowspan=2)
 
+        # Texteditor interface
         self.text_editor = tk.Text(self, width=TEXTEDITOR_CHARACTERWIDTH,
                                    height=TEXTEDITOR_LINEHEIGHT)
         self.text_editor.grid(row=1, column=0, rowspan=TEXTEDITOR_ROWSPAN,
                               columnspan=TEXTEDITOR_COLUMNSPAN,
                               sticky=tk.N+tk.S+tk.E+tk.W)
         self.text_editor.tag_configure("red", foreground="#ff0000")
+        # Update the image after the release of any key
         self.text_editor.bind("<KeyRelease>", self.on_text_changed)
         self.graph_editor = tk.Canvas(self, bg='#854116',
                                       width=GRAPHEDITOR_WIDTH,
@@ -117,6 +132,7 @@ class GraphEditorFrame(tk.Frame):
                                rowspan=TEXTEDITOR_ROWSPAN - 1,
                                sticky=tk.N+tk.S+tk.E+tk.W)
 
+        # Track the mouse to enable creating new ovals and dragging figures
         self.graph_editor.bind("<Button-1>", self.on_mouse_click)
         self.graph_editor.bind("<Motion>", self.on_mouse_motion)
         self.graph_editor.bind("<ButtonRelease-1>", self.on_mouse_release)
@@ -143,41 +159,91 @@ class GraphEditorFrame(tk.Frame):
                               GRAPHEDITOR_COLUMNSPAN - 1, sticky=tk.N+tk.S)
 
     def on_mouse_click(self, event):
-        ''' When clicked on the canvas,
-        start drawing new oval
+        ''' Draw new oval or drag existing
         '''
-        self.new_coord = [event.x, event.y]
-        self.new_oval = self.graph_editor.create_oval(
-                            event.x, event.y, event.x, event.y,
-                            outline="#000000", fill="#ffffff"
-                        )
+        # Does the cursor lie on the existing figure
+        # If so, drag it
+        self.is_dragged_figure = False
+        for figure_idx in range(len(self.figures_lst)):
+            figure = self.figures_lst[figure_idx]
+            if is_point_in_rectangle(event.x, event.y, figure.coords):
+                self.is_dragged_figure = True
+                # Drag this figure
+                self.dragged_figure_idx = figure_idx
+        if not self.is_dragged_figure:
+            self.new_coord = [event.x, event.y]
+            self.new_oval = self.graph_editor.create_oval(
+                                event.x, event.y, event.x, event.y,
+                                outline="#000000", fill="#ffffff"
+                            )
+        else:
+            # From which point the dragging started
+            self.drag_start_coords = (event.x, event.y)
 
     def on_mouse_motion(self, event):
-        ''' The mouse motion on canvas.
-        Resize the oval
+        ''' Resize the new oval, or drag existing
         '''
-        # The new oval is being created
         if len(self.new_coord) == 2:
+            # The new oval is being created
             self.graph_editor.coords(self.new_oval,
                                      self.new_coord[0], self.new_coord[1],
                                      event.x, event.y)
+        elif self.is_dragged_figure:
+            # Currently dragging the figure
+            x_offset = event.x - self.drag_start_coords[0]
+            y_offset = event.y - self.drag_start_coords[1]
+            figure = self.figures_lst[self.dragged_figure_idx]
+            self.graph_editor.coords(
+                self.canvas_figures[self.dragged_figure_idx],
+                figure.coords[0] + x_offset,
+                figure.coords[1] + y_offset,
+                figure.coords[2] + x_offset,
+                figure.coords[3] + y_offset
+             )
 
     def on_mouse_release(self, event):
-        ''' When the mouse is released,
-        save the drawing to the text editor
+        ''' Save changes in the image to text
         '''
-        self.new_coord.append(event.x)
-        self.new_coord.append(event.y)
-        self.graph_editor.coords(self.new_oval,
-                                 self.new_coord[0], self.new_coord[1],
-                                 event.x, event.y)
-        assert(len(self.new_coord) == 4)
-        new_figure = FigureInfo(figure_type="oval",
-                                coords=self.new_coord,
-                                border_size=1.0,
-                                border_color="#000000",
-                                fill_color="#ffffff")
-        self.text_editor.insert(tk.END, text_from_figure(new_figure) + '\n')
+        if len(self.new_coord) == 2:
+            # Create new oval
+            self.new_coord.append(event.x)
+            self.new_coord.append(event.y)
+            self.graph_editor.coords(self.new_oval,
+                                     self.new_coord[0], self.new_coord[1],
+                                     event.x, event.y)
+            assert(len(self.new_coord) == 4)
+            new_figure = FigureInfo(figure_type="oval",
+                                    coords=self.new_coord,
+                                    border_size=1.0,
+                                    border_color="#000000",
+                                    fill_color="#ffffff")
+            self.text_editor.insert(tk.END,
+                                    text_from_figure(new_figure) + '\n')
+        elif self.is_dragged_figure:
+            # Delete existing entry and create new
+            line_start = f"{self.dragged_figure_idx + 1}.0"
+            line_end = f"{self.dragged_figure_idx + 1}.end+1c"
+            self.text_editor.delete(line_start, line_end)
+            # Update the coordinates
+            figure = self.figures_lst[self.dragged_figure_idx]
+            new_coords = self.figures_lst[self.dragged_figure_idx].coords
+            x_offset = event.x - self.drag_start_coords[0]
+            y_offset = event.y - self.drag_start_coords[1]
+            new_coords[0] += x_offset
+            new_coords[1] += y_offset
+            new_coords[2] += x_offset
+            new_coords[3] += y_offset
+            # Insert new figure
+            new_figure = FigureInfo(figure_type=figure.figure_type,
+                                    coords=new_coords,
+                                    border_size=figure.border_size,
+                                    border_color=figure.border_color,
+                                    fill_color=figure.fill_color)
+            self.text_editor.insert(tk.END,
+                                    text_from_figure(new_figure) + '\n')
+        self.create_figures_lst()
+        self.draw_figures()
+        self.is_dragged_figure = False
 
     def on_text_changed(self, event):
         ''' When text in the widger changes,
@@ -188,7 +254,7 @@ class GraphEditorFrame(tk.Frame):
         editor_input = self.text_editor.get("1.0", "end-1c")
         lines = editor_input.split('\n')
         tk_idx = tk.IntVar()
-        self.figures_list = []
+        self.figures_lst = []
         for line, line_idx in zip(lines, range(len(lines))):
             line_start = f"{line_idx+1}.0"
             line_end = f"{line_idx+1}.end"
@@ -197,8 +263,21 @@ class GraphEditorFrame(tk.Frame):
                 self.text_editor.tag_add("red", line_start, line_end)
             else:
                 self.text_editor.tag_remove("red", line_start, line_end)
-                self.figures_list.append(figure)
+                self.figures_lst.append(figure)
         self.draw_figures()
+
+    def create_figures_lst(self):
+        ''' Create list of figures
+        '''
+        # Get input from the text widget
+        # Get adds a newline, so delete it
+        editor_input = self.text_editor.get("1.0", "end-1c")
+        lines = editor_input.split('\n')
+        self.figures_lst = []
+        for line in lines:
+            figure = figure_from_text(line)
+            if figure is not None:
+                self.figures_lst.append(figure)
 
     def draw_figures(self):
         ''' Draw figures from the figure list
@@ -206,13 +285,17 @@ class GraphEditorFrame(tk.Frame):
         # Clear all previously drawn solution
         # Not optimal, better update them
         self.graph_editor.delete("all")
-        for figure in self.figures_list:
+        self.canvas_figures = []
+        for figure in self.figures_lst:
             if figure.figure_type == "oval":
-                self.graph_editor.create_oval(
-                    figure.coords[0], figure.coords[1],
-                    figure.coords[2], figure.coords[3],
-                    fill=figure.fill_color, outline=figure.border_color,
-                    width=figure.border_size)
+                self.canvas_figures.append(
+                    self.graph_editor.create_oval(
+                        figure.coords[0], figure.coords[1],
+                        figure.coords[2], figure.coords[3],
+                        fill=figure.fill_color, outline=figure.border_color,
+                        width=figure.border_size
+                    )
+                )
 
     def save_text(self):
         pass
