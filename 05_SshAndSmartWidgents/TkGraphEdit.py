@@ -1,6 +1,42 @@
+import re
 import time
 import tkinter as tk
 import typing as t
+
+
+class FigureInfo(t.NamedTuple):
+    figure_type: str
+    # Two points coordinates:
+    # The left and the right corner
+    coords: t.List[float]
+    border_size: float
+    border_color: str
+    fill_color: str
+
+
+def figure_from_text(line: str) -> FigureInfo:
+    line = line.strip()
+    figure_regex = re.compile(".*oval[\s]+(<.*>)"
+                              "[\s]+([0-9]*[.][0-9]*)[\s]+"
+                              "(#[0-9a-f]{6})[\s]+(#[0-9a-f]{6})")
+    figure_match = figure_regex.match(line)
+    if figure_match is None:
+        return None
+    coords_str = figure_match.group(1).strip('<').strip('>')
+    coords_lst = coords_str.split()
+    if len(coords_lst) != 4:
+        return None
+    try:
+        coords = [float(coord) for coord in coords_lst]
+    except ValueError:
+        return None
+    border_size = float(figure_match.group(2))
+    border_color = figure_match.group(3)
+    fill_color = figure_match.group(4)
+    return FigureInfo(figure_type="oval", coords=coords,
+                      border_size=border_size,
+                      border_color=border_color,
+                      fill_color=fill_color)
 
 
 class GraphEditorFrame(tk.Frame):
@@ -62,6 +98,8 @@ class GraphEditorFrame(tk.Frame):
         self.text_editor.grid(row=1, column=0, rowspan=TEXTEDITOR_ROWSPAN,
                               columnspan=TEXTEDITOR_COLUMNSPAN,
                               sticky=tk.N+tk.S+tk.E+tk.W)
+        self.text_editor.tag_configure("red", foreground="#ff0000")
+        self.text_editor.bind("<KeyRelease>", self.on_text_changed)
         self.graph_editor = tk.Canvas(self, bg='#854116',
                                       width=GRAPHEDITOR_WIDTH,
                                       height=GRAPHEDITOR_HEIGHT)
@@ -91,6 +129,23 @@ class GraphEditorFrame(tk.Frame):
                               column=TEXTEDITOR_COLUMNSPAN +
                               GRAPHEDITOR_COLUMNSPAN - 1, sticky=tk.N+tk.S)
 
+    def on_text_changed(self, event):
+        ''' When text in the widger changes,
+        update the figure list and highlights
+        '''
+        # Get input from the text widget
+        # Get adds a newline, so delete it
+        editor_input = self.text_editor.get("1.0", "end-1c")
+        lines = editor_input.split('\n')
+        tk_idx = tk.IntVar()
+        for line, line_idx in zip(lines, range(len(lines))):
+            line_start = f"{line_idx+1}.0"
+            line_end = f"{line_idx+1}.end"
+            if figure_from_text(line) is None:
+                self.text_editor.tag_add("red", line_start, line_end)
+            else:
+                self.text_editor.tag_remove("red", line_start, line_end)
+
     def save_text(self):
         pass
 
@@ -98,6 +153,7 @@ class GraphEditorFrame(tk.Frame):
         pass
 
 
-graph_editor_frame = GraphEditorFrame()
-graph_editor_frame.master.title('Graph Edit')
-graph_editor_frame.mainloop()
+if __name__ == "__main__":
+    graph_editor_frame = GraphEditorFrame()
+    graph_editor_frame.master.title('Graph Edit')
+    graph_editor_frame.mainloop()
