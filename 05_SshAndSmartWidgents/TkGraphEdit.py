@@ -17,7 +17,7 @@ class FigureInfo(t.NamedTuple):
 def figure_from_text(line: str) -> FigureInfo:
     line = line.strip()
     figure_regex = re.compile(".*oval[\s]+(<.*>)"
-                              "[\s]+([0-9]*[.][0-9]*)[\s]+"
+                              "[\s]+([0-9]+[.]*[0-9]*)[\s]+"
                               "(#[0-9a-f]{6})[\s]+(#[0-9a-f]{6})")
     figure_match = figure_regex.match(line)
     if figure_match is None:
@@ -28,9 +28,9 @@ def figure_from_text(line: str) -> FigureInfo:
         return None
     try:
         coords = [float(coord) for coord in coords_lst]
+        border_size = float(figure_match.group(2))
     except ValueError:
         return None
-    border_size = float(figure_match.group(2))
     border_color = figure_match.group(3)
     fill_color = figure_match.group(4)
     return FigureInfo(figure_type="oval", coords=coords,
@@ -39,10 +39,19 @@ def figure_from_text(line: str) -> FigureInfo:
                       fill_color=fill_color)
 
 
+def text_from_figure(figure: FigureInfo) -> str:
+    ''' Print a figure to the text
+    '''
+    return f"{figure.figure_type} <{figure.coords[0]} {figure.coords[1]} " +\
+           f"{figure.coords[2]} {figure.coords[3]}> {figure.border_size} " +\
+           f"{figure.border_color} {figure.fill_color}"
+
+
 class GraphEditorFrame(tk.Frame):
 
     def __init__(self, master=None):
         super().__init__(master)
+        self.new_coord = []
         self.grid(sticky=tk.N+tk.S+tk.E+tk.W)
         self.create_widgets()
 
@@ -107,6 +116,10 @@ class GraphEditorFrame(tk.Frame):
                                columnspan=GRAPHEDITOR_COLUMNSPAN,
                                rowspan=TEXTEDITOR_ROWSPAN - 1,
                                sticky=tk.N+tk.S+tk.E+tk.W)
+
+        self.graph_editor.bind("<Button-1>", self.on_mouse_click)
+        self.graph_editor.bind("<Motion>", self.on_mouse_motion)
+        self.graph_editor.bind("<ButtonRelease-1>", self.on_mouse_release)
         # Add empty space to fix the first row buttons
         self.columnconfigure(TEXTEDITOR_COLUMNSPAN + 5,
                              minsize=GRAPHEDITOR_WIDTH - 5 * BUTTON_WIDTH,
@@ -129,6 +142,43 @@ class GraphEditorFrame(tk.Frame):
                               column=TEXTEDITOR_COLUMNSPAN +
                               GRAPHEDITOR_COLUMNSPAN - 1, sticky=tk.N+tk.S)
 
+    def on_mouse_click(self, event):
+        ''' When clicked on the canvas,
+        start drawing new oval
+        '''
+        self.new_coord = [event.x, event.y]
+        self.new_oval = self.graph_editor.create_oval(
+                            event.x, event.y, event.x, event.y,
+                            outline="#000000", fill="#ffffff"
+                        )
+
+    def on_mouse_motion(self, event):
+        ''' The mouse motion on canvas.
+        Resize the oval
+        '''
+        # The new oval is being created
+        if len(self.new_coord) == 2:
+            self.graph_editor.coords(self.new_oval,
+                                     self.new_coord[0], self.new_coord[1],
+                                     event.x, event.y)
+
+    def on_mouse_release(self, event):
+        ''' When the mouse is released,
+        save the drawing to the text editor
+        '''
+        self.new_coord.append(event.x)
+        self.new_coord.append(event.y)
+        self.graph_editor.coords(self.new_oval,
+                                 self.new_coord[0], self.new_coord[1],
+                                 event.x, event.y)
+        assert(len(self.new_coord) == 4)
+        new_figure = FigureInfo(figure_type="oval",
+                                coords=self.new_coord,
+                                border_size=1.0,
+                                border_color="#000000",
+                                fill_color="#ffffff")
+        self.text_editor.insert(tk.END, text_from_figure(new_figure) + '\n')
+
     def on_text_changed(self, event):
         ''' When text in the widger changes,
         update the figure list and highlights
@@ -138,13 +188,31 @@ class GraphEditorFrame(tk.Frame):
         editor_input = self.text_editor.get("1.0", "end-1c")
         lines = editor_input.split('\n')
         tk_idx = tk.IntVar()
+        self.figures_list = []
         for line, line_idx in zip(lines, range(len(lines))):
             line_start = f"{line_idx+1}.0"
             line_end = f"{line_idx+1}.end"
-            if figure_from_text(line) is None:
+            figure = figure_from_text(line)
+            if figure is None:
                 self.text_editor.tag_add("red", line_start, line_end)
             else:
                 self.text_editor.tag_remove("red", line_start, line_end)
+                self.figures_list.append(figure)
+        self.draw_figures()
+
+    def draw_figures(self):
+        ''' Draw figures from the figure list
+        '''
+        # Clear all previously drawn solution
+        # Not optimal, better update them
+        self.graph_editor.delete("all")
+        for figure in self.figures_list:
+            if figure.figure_type == "oval":
+                self.graph_editor.create_oval(
+                    figure.coords[0], figure.coords[1],
+                    figure.coords[2], figure.coords[3],
+                    fill=figure.fill_color, outline=figure.border_color,
+                    width=figure.border_size)
 
     def save_text(self):
         pass
